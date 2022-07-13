@@ -443,9 +443,9 @@ impl FlashLoader {
             .iter()
             // filter for algorithims that contiain adress range
             .filter(|&fa| {
-                fa.flash_properties
-                    .address_range
-                    .contains_range(&region.range)
+                region
+                    .range
+                    .contains_range(&fa.flash_properties.address_range)
             })
             .collect::<Vec<_>>();
 
