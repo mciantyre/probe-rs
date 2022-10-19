@@ -3,6 +3,8 @@ use xshell::{cmd, Shell};
 
 type DynError = Box<dyn std::error::Error>;
 
+mod target_stats;
+
 fn main() {
     if let Err(e) = try_main() {
         eprintln!("{}", e);
@@ -13,6 +15,7 @@ fn main() {
 fn try_main() -> Result<(), DynError> {
     let task = env::args().nth(1);
     match task.as_deref() {
+        Some("target-stats") => target_stats::print()?,
         Some("release") => release(
             &env::args()
                 .nth(2)
@@ -37,6 +40,9 @@ release <next_release>
         1. Bump all probe-rs dependency numbers.
         2. Create a commit.
         3. Create a PR with a label.
+
+target-stats
+    Help: Print interesting statistics about built-in targets.
 "
     )
 }

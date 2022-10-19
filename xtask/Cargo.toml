@@ -6,4 +6,5 @@ edition = "2021"
 publish = false
 
 [dependencies]
+probe-rs = { path = "../probe-rs" }
 xshell = "0.2.1"
