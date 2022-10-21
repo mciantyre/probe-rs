@@ -20,14 +20,14 @@ variants:
       start: 0x20240000
       end: 0x20380000
     cores:
-    - main
+    - cm7
   - !Nvm
     name: FlexSPI1
     range:
       start: 0x30000000
       end: 0x31000000
     cores:
-    - main
+    - cm7
   flash_algorithms:
   - mimxrt117x_quadspi_4kb_sec
   - mimxrt117x_quadspi_4kb_sec_alias
