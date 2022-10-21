@@ -22,10 +22,10 @@ variants:
     cores:
     - main
   - !Nvm
-    name: ROMCP
+    name: FlexSPI1
     range:
-      start: 0x200000
-      end: 0x240000
+      start: 0x30000000
+      end: 0x31000000
     cores:
     - main
   flash_algorithms:
