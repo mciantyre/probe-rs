@@ -1,67 +1,7 @@
-name: MIMXRT1176
+name: MIMXRT1170
 pack_file_release: 15.0.0
 variants:
-- name: MIMXRT1176AVM8A
-  cores:
-  - name: cm4
-    type: armv7em
-    core_access_options: !Arm
-      ap: 1
-      psel: 0
-  - name: cm7
-    type: armv7em
-    core_access_options: !Arm
-      ap: 0
-      psel: 0
-  memory_map:
-  - !Ram
-    name: SRAM_OC1 + SRAM_OC2 + SRAM_OC_ECC1 + SRAM_OC_ECC2 + SRAM_OC_cm7
-    range:
-      start: 0x20240000
-      end: 0x20380000
-    cores:
-    - main
-  - !Nvm
-    name: ROMCP
-    range:
-      start: 0x200000
-      end: 0x240000
-    cores:
-    - main
-  flash_algorithms:
-  - mimxrt117x_quadspi_4kb_sec
-  - mimxrt117x_quadspi_4kb_sec_alias
-- name: MIMXRT1176CVM8A
-  cores:
-  - name: cm4
-    type: armv7em
-    core_access_options: !Arm
-      ap: 1
-      psel: 0
-  - name: cm7
-    type: armv7em
-    core_access_options: !Arm
-      ap: 0
-      psel: 0
-  memory_map:
-  - !Ram
-    name: SRAM_OC1 + SRAM_OC2 + SRAM_OC_ECC1 + SRAM_OC_ECC2 + SRAM_OC_cm7
-    range:
-      start: 0x20240000
-      end: 0x20380000
-    cores:
-    - main
-  - !Nvm
-    name: ROMCP
-    range:
-      start: 0x200000
-      end: 0x240000
-    cores:
-    - main
-  flash_algorithms:
-  - mimxrt117x_quadspi_4kb_sec
-  - mimxrt117x_quadspi_4kb_sec_alias
-- name: MIMXRT1176DVMAA
+- name: MIMXRT1170
   cores:
   - name: cm4
     type: armv7em
