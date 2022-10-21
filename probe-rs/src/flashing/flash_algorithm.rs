@@ -154,7 +154,7 @@ impl FlashAlgorithm {
         true
     }
 
-    const FLASH_ALGO_STACK_SIZE: u32 = 512;
+    const FLASH_ALGO_STACK_SIZE: u32 = 4096;
     const FLASH_ALGO_STACK_DECREMENT: u32 = 64;
 
     // Header for RISCV Flash Algorithms
