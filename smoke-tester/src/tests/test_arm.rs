@@ -10,11 +10,12 @@ use probe_rs::{
 use crate::{CORE_TESTS, TestFailure, TestResult, TestTracker, println_test_status};
 
 const TEST_CODE: &[u8] = include_bytes!("test_arm.bin");
+struct TestCodeContext {
+    code_load_address: u64,
+}
 
-#[distributed_slice(CORE_TESTS)]
-fn test_stepping(tracker: &TestTracker, core: &mut Core) -> TestResult {
-    println_test_status!(tracker, blue, "Testing stepping on core {}...", core.id());
-
+/// Installs the ARM test code into the target and prepares the core to execute it.
+fn setup_test_code(tracker: &TestTracker, core: &mut Core) -> Result<TestCodeContext, TestFailure> {
     if core.architecture() != Architecture::Arm {
         // Not implemented for RISC-V yet
         return Err(TestFailure::UnimplementedForTarget(
@@ -46,6 +47,17 @@ fn test_stepping(tracker: &TestTracker, core: &mut Core) -> TestResult {
     let registers = core.registers();
     core.write_core_reg(registers.pc().unwrap(), code_load_address)?;
 
+    Ok(TestCodeContext { code_load_address })
+}
+
+#[distributed_slice(CORE_TESTS)]
+fn test_stepping(tracker: &TestTracker, core: &mut Core) -> TestResult {
+    println!("Testing stepping...");
+
+    let TestCodeContext {
+        code_load_address, ..
+    } = setup_test_code(tracker, core)?;
+    let registers = core.registers();
     let core_information = core.step()?;
 
     let expected_pc = code_load_address + 2;
@@ -161,4 +173,69 @@ fn test_stepping(tracker: &TestTracker, core: &mut Core) -> TestResult {
     assert_eq!(1, r2_val);
 
     Ok(())
+}
+
+/// When a target resets, it should persist any breakpoints that were established before the reset.
+#[distributed_slice(CORE_TESTS)]
+fn test_breakpoint_persistence_across_reset(tracker: &TestTracker, core: &mut Core) -> TestResult {
+    println_test_status!(
+        tracker,
+        blue,
+        "Testing breakpoint persistence across reset..."
+    );
+
+    let num_breakpoints = core.available_breakpoint_units()?;
+    if num_breakpoints == 0 {
+        return Err(TestFailure::Skipped(
+            "This target doesn't have any breakpoints".into(),
+        ));
+    }
+
+    let TestCodeContext {
+        code_load_address, ..
+    } = setup_test_code(tracker, core)?;
+
+    let bpt = code_load_address + 4; // Just before the bkpt instruction.
+
+    let run_and_encounter_breakpoint = |core: &mut Core| -> TestResult {
+        core.run()?;
+        core.wait_for_core_halted(Duration::from_millis(100))?;
+
+        let core_status = core.status()?;
+
+        if !matches!(
+            core_status,
+            CoreStatus::Halted(HaltReason::Breakpoint(BreakpointCause::Hardware))
+                | CoreStatus::Halted(HaltReason::Breakpoint(BreakpointCause::Unknown))
+        ) {
+            return Err(TestFailure::Error(anyhow::anyhow!(
+                "Core status is not properly halted! Instead, it's {:?}",
+                core_status
+            )));
+        }
+
+        let pc: u64 = core.read_core_reg(core.program_counter())?;
+
+        if pc != bpt {
+            return Err(TestFailure::Error(anyhow::anyhow!(
+                "PC should be at {bpt:#010X} but it was at {pc:#010X}"
+            )));
+        }
+
+        Ok(())
+    };
+
+    println!("Setting breakpoint after reset...");
+    core.set_hw_breakpoint(bpt)?;
+
+    // Disable the breakpoint no matter the (early) result.
+    let test_result = || -> TestResult {
+        run_and_encounter_breakpoint(core)?;
+        println!("Resetting core with previously-enabled breakpoint...");
+        setup_test_code(tracker, core)?;
+        run_and_encounter_breakpoint(core)?;
+        Ok(())
+    }();
+    let cleanup_result = core.clear_all_hw_breakpoints();
+    test_result.and_then(|_| cleanup_result.map_err(From::from))
 }
