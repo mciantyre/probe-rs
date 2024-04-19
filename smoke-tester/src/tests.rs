@@ -8,7 +8,7 @@ use probe_rs::{
     flashing::{DownloadOptions, FlashProgress, FormatKind, download_file_with_options},
 };
 
-pub mod stepping;
+pub mod test_arm;
 
 use miette::{IntoDiagnostic, Result, WrapErr};
 
