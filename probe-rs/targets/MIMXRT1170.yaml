@@ -24,6 +24,20 @@ variants:
       end: 0x31000000
     cores:
     - cm7
+  - !Ram
+    name: ITCM
+    range:
+      start: 0x00000000
+      end: 0x00040000
+    cores:
+    - cm7
+  - !Ram
+    name: DTCM
+    range:
+      start: 0x20000000
+      end: 0x20040000
+    cores:
+    - cm7
   flash_algorithms:
   - mimxrt117x_quadspi_4kb_sec
 flash_algorithms:
