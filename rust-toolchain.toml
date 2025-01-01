@@ -1,6 +1,0 @@
-[toolchain]
-channel = "1.84.0"
-
-components = ["rustfmt", "clippy"]
-# Target used for tests
-targets = ["thumbv7m-none-eabi"]
