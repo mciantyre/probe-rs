@@ -8,7 +8,7 @@ use anyhow::anyhow;
 use itm::TracePacket;
 use probe_rs::{
     architecture::arm::{
-        component::{find_component, Dwt, TraceSink},
+        component::{enable_tracing, find_component, Dwt, TraceSink},
         dp::DpAddress,
         memory::PeripheralType,
         SwoConfig,
@@ -57,6 +57,9 @@ pub enum ProfileMethod {
         /// The desired baud rate of the SWO output.
         baud: u32,
     },
+    /// Use the DWT_PCSR to profile the chip (ARM only)
+    #[clap(name = "pcsr")]
+    Pcsr,
 }
 
 impl std::fmt::Display for ProfileMethod {
@@ -126,6 +129,22 @@ impl ProfileCmd {
                     if start.elapsed() > duration {
                         break;
                     }
+                }
+            }
+            ProfileMethod::Pcsr => {
+                enable_tracing(&mut session.core(self.core)?)?;
+
+                let components = session.get_arm_components(DpAddress::Default)?;
+                let component = find_component(&components, PeripheralType::Dwt)?;
+                let interface = session.get_arm_interface()?;
+
+                let mut dwt = Dwt::new(interface, component);
+                dwt.enable()?;
+
+                while start.elapsed() <= duration {
+                    let pc = dwt.program_counter_sample()?;
+                    *samples.entry(pc).or_insert(1) += 1;
+                    reads += 1;
                 }
             }
             ProfileMethod::Itm { clk, baud } => {
