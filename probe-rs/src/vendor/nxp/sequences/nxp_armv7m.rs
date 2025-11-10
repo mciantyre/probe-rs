@@ -69,6 +69,10 @@ impl MIMXRT10xx {
         Ok(())
     }
 
+    const IOMUXC_GPR_GPR16: u64 = 0x400A_C040;
+    const IOMUXC_GPR_GPR17: u64 = 0x400A_C044;
+    const FLEXRAM_BANK_CFG_SEL_MASK: u32 = 1 << 2;
+
     /// Use the boot fuse configuration for FlexRAM.
     ///
     /// If the user changed the FlexRAM configuration in software,
@@ -82,11 +86,24 @@ impl MIMXRT10xx {
         &self,
         probe: &mut dyn ArmMemoryInterface,
     ) -> Result<(), ArmError> {
-        const IOMUXC_GPR_GPR16: u64 = 0x400A_C040;
-        const FLEXRAM_BANK_CFG_SEL_MASK: u32 = 1 << 2;
-        let mut gpr16 = probe.read_word_32(IOMUXC_GPR_GPR16)?;
-        gpr16 &= !FLEXRAM_BANK_CFG_SEL_MASK;
-        probe.write_word_32(IOMUXC_GPR_GPR16, gpr16)?;
+        let mut gpr16 = probe.read_word_32(Self::IOMUXC_GPR_GPR16)?;
+        gpr16 &= !Self::FLEXRAM_BANK_CFG_SEL_MASK;
+        probe.write_word_32(Self::IOMUXC_GPR_GPR16, gpr16)?;
+        probe.flush()?;
+        Ok(())
+    }
+
+    /// Use the given mask for the FlexRAM configuration.
+    fn use_config_for_flexram(
+        &self,
+        probe: &mut dyn ArmMemoryInterface,
+        mask: u32,
+    ) -> Result<(), ArmError> {
+        probe.write_word_32(Self::IOMUXC_GPR_GPR17, mask)?;
+
+        let mut gpr16 = probe.read_word_32(Self::IOMUXC_GPR_GPR16)?;
+        gpr16 |= Self::FLEXRAM_BANK_CFG_SEL_MASK;
+        probe.write_word_32(Self::IOMUXC_GPR_GPR16, gpr16)?;
         probe.flush()?;
         Ok(())
     }
@@ -142,8 +159,13 @@ impl ArmDebugSequence for MIMXRT10xx {
 
         // OK to perform before the reset, since the configuration
         // persists beyond the reset.
-        tracing::debug!("Setting FlexRAM layout");
-        self.use_boot_fuses_for_flexram(interface)?;
+        if let Some(mask) = get_flexram_layout_from_env()? {
+            tracing::debug!("Setting FlexRAM config to {mask:#010X}");
+            self.use_config_for_flexram(interface, mask)?;
+        } else {
+            tracing::debug!("Configuring FlexRAM to boot fuses");
+            self.use_boot_fuses_for_flexram(interface)?;
+        }
 
         tracing::debug!("Enabling DWT to set a watchpoint");
         let mut demcr = Demcr(interface.read_word_32(Demcr::get_mmio_address())?);
@@ -420,16 +442,35 @@ impl MIMXRT11xx {
         Ok(Some(reset_handler))
     }
 
+    const IOMUXC_GPR_GPR16: u64 = 0x400E_4040;
+    const IOMUXC_GPR_GPR17: u64 = 0x400E_4044;
+    const IOMUXC_GPR_GPR18: u64 = 0x400E_4048;
+    const FLEXRAM_BANK_CFG_SEL_MASK: u32 = 1 << 2;
+
     /// See documentation for [`MIMXRT10xx::use_boot_fuses_for_flexram`].
     fn use_boot_fuses_for_flexram(
         &self,
         probe: &mut dyn ArmMemoryInterface,
     ) -> Result<(), ArmError> {
-        const IOMUXC_GPR_GPR16: u64 = 0x400E_4040;
-        const FLEXRAM_BANK_CFG_SEL_MASK: u32 = 1 << 2;
-        let mut gpr16 = probe.read_word_32(IOMUXC_GPR_GPR16)?;
-        gpr16 &= !FLEXRAM_BANK_CFG_SEL_MASK;
-        probe.write_word_32(IOMUXC_GPR_GPR16, gpr16)?;
+        let mut gpr16 = probe.read_word_32(Self::IOMUXC_GPR_GPR16)?;
+        gpr16 &= !Self::FLEXRAM_BANK_CFG_SEL_MASK;
+        probe.write_word_32(Self::IOMUXC_GPR_GPR16, gpr16)?;
+        probe.flush()?;
+        Ok(())
+    }
+
+    /// Set the FlexRAM configuration mask.
+    fn use_config_for_flexram(
+        &self,
+        probe: &mut dyn ArmMemoryInterface,
+        mask: u32,
+    ) -> Result<(), ArmError> {
+        probe.write_word_32(Self::IOMUXC_GPR_GPR17, mask & 0xFFFF)?;
+        probe.write_word_32(Self::IOMUXC_GPR_GPR18, mask >> 16)?;
+
+        let mut gpr16 = probe.read_word_32(Self::IOMUXC_GPR_GPR16)?;
+        gpr16 |= Self::FLEXRAM_BANK_CFG_SEL_MASK;
+        probe.write_word_32(Self::IOMUXC_GPR_GPR16, gpr16)?;
         probe.flush()?;
         Ok(())
     }
@@ -464,7 +505,13 @@ impl ArmDebugSequence for MIMXRT11xx {
         // OK to perform before the reset, since the configuration
         // persists beyond the reset.
         self.halt(probe, true)?;
-        self.use_boot_fuses_for_flexram(probe)?;
+        if let Some(mask) = get_flexram_layout_from_env()? {
+            tracing::debug!("Setting FlexRAM config to {mask:#010X}");
+            self.use_config_for_flexram(probe, mask)?;
+        } else {
+            tracing::debug!("Configuring FlexRAM to boot fuses");
+            self.use_boot_fuses_for_flexram(probe)?;
+        }
 
         // Cache debug system state that may be lost across the reset.
         let debug_cache = DebugCache::from_target(probe)?;
@@ -604,5 +651,116 @@ impl DebugCache {
         }
 
         Ok(())
+    }
+}
+
+/// Convert a FlexRAM layout string specification into the configuration
+/// bitmask written to hardware.
+///
+/// The routine is case insensitive. The implementation only caps the theoretical
+/// maximum number of banks; however, your chip may have fewer. Any unspecified
+/// banks are treated as unused.
+///
+/// Bank 0 is the left-most character in the specification, followed by bank 1,
+/// bank 2, etc. Any unspecified banks are filled with `U` for "unused."
+///
+/// See AN12077 for more information.
+/// <https://www.nxp.com/docs/en/application-note/AN12077.pdf>
+fn imxrt_flexram_config(spec: &str) -> Result<u32, ArmError> {
+    const VALID_CHARS: [char; 4] = ['U', 'O', 'D', 'I'];
+
+    let upper = spec.to_uppercase();
+    if !upper.chars().all(|c| VALID_CHARS.contains(&c)) {
+        return Err(ArmError::DebugSequence(
+            ArmDebugSequenceError::SequenceSpecific(
+                format!("FlexRAM layout '{spec}' contains a character other than {VALID_CHARS:?}")
+                    .into(),
+            ),
+        ));
+    }
+
+    if upper.len() > 16 {
+        return Err(ArmError::DebugSequence(
+            ArmDebugSequenceError::SequenceSpecific(
+                format!(
+                    "FlexRAM layout '{spec}' contains {} memory banks, but the max is 16",
+                    upper.len()
+                )
+                .into(),
+            ),
+        ));
+    }
+
+    let mask = upper.chars().enumerate().fold(0_u32, |mask, (idx, char)| {
+        // See AN12077 to understand the two bit values for a FlexRAM bank.
+        let bank = (match char {
+            'U' => 0b00_u32,
+            'O' => 0b01,
+            'D' => 0b10,
+            'I' => 0b11,
+            _ => unreachable!("Checked above that all characters are valid"),
+        })
+        .checked_shl(2_u32 * u32::try_from(idx).unwrap())
+        .unwrap();
+        bank | mask
+    });
+
+    Ok(mask)
+}
+
+/// The environment variable to control the FlexRAM layout.
+const FLEXRAM_CONFIG_ENV_VAR: &str = "PROBE_RS_MIMXRT_FLEXRAM_LAYOUT";
+
+/// Return any FlexRAM configuration specification from an environment
+/// variable. The returned mask is ready to be written to hardware.
+fn get_flexram_layout_from_env() -> Result<Option<u32>, ArmError> {
+    let var = match std::env::var(FLEXRAM_CONFIG_ENV_VAR) {
+        Err(std::env::VarError::NotPresent) => {
+            tracing::debug!("Env var {FLEXRAM_CONFIG_ENV_VAR} not found");
+            return Ok(None);
+        }
+        Err(std::env::VarError::NotUnicode(weird)) => {
+            tracing::warn!("Ignoring non-Unicode env var {FLEXRAM_CONFIG_ENV_VAR} '{weird:?}'");
+            return Ok(None);
+        }
+        Ok(var) => var,
+    };
+
+    if var.is_empty() {
+        tracing::warn!("Allowing empty {FLEXRAM_CONFIG_ENV_VAR} to disable all FlexRAM banks");
+    }
+
+    let mask = imxrt_flexram_config(&var)?;
+    Ok(Some(mask))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::imxrt_flexram_config;
+
+    #[test]
+    fn good_flexram_configs() {
+        let cases = [
+            ("", 0),
+            ("u", 0),
+            ("uuuuuuuuuuuuuuuu", 0),
+            ("OoDI", 0b11100101),
+            ("OoDIuuuuuuuuuuuu", 0b11100101),
+            ("ooddiioo", 0b0101111110100101),
+            ("OOOoddiiiIDDOOOO", 0b01010101101011111111101001010101),
+            ("DDDDIIIIDdDDIIII", 0b11111111101010101111111110101010),
+            ("uuuuuuuuuuuuuuui", 0xC0000000),
+        ];
+
+        for (spec, expected) in cases {
+            let actual = imxrt_flexram_config(spec).unwrap();
+            assert_eq!(actual, expected, "{spec} {actual:#010X} {expected:#010X}");
+        }
+    }
+
+    #[test]
+    fn bad_flexram_configs() {
+        assert!(imxrt_flexram_config("OoDIh").is_err());
+        assert!(imxrt_flexram_config("uuuuuuuuuuuuuuuuu").is_err());
     }
 }
